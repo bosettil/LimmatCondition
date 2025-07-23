@@ -1,0 +1,71 @@
+name: Create Limmat Graph
+
+on:
+  schedule:
+    - cron: '0 9 * * 1-5'  # This will run the workflow weekdays at midday Zurich time (UTC+2)
+
+# Env variables
+env:
+  CACHE_NUMBER: 0  # increase to reset cache manually
+  
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Check Env File
+        id: check-env-file
+        uses: tj-actions/changed-files@v41
+        with:
+          files: |
+            requirements.yml
+
+      - name: Set Env
+        # trigger if env file change or on schedule
+        if: ${{ steps.check-env-file.outputs.any_changed == 'true' || github.event_name == 'schedule' }}
+        run: echo "ENV_STATE=env_change" >> $GITHUB_ENV
+        
+  run-script:
+    # create the figure
+    needs: prep
+    name: linux-64
+    runs-on: ubuntu-latest
+    steps:
+      # checkout the dev branch
+      - uses: actions/checkout@v3
+
+      # setup the conda env
+      - name: Setup Miniforge
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+            miniforge-variant: Miniforge3
+            miniforge-version: latest
+            activate-environment: limmat-env
+            use-mamba: true
+
+      # date for the cache
+      - name: Set cache date
+        run: echo "DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
+
+      # reset cache if env file changed
+      - uses: actions/cache@v3
+        with:
+          path: /home/runner/miniconda3/envs/limmat-env
+          key: linux-64-conda-${{ hashFiles('requirements.yml') }}-${{ env.DATE }}-${{ env.CACHE_NUMBER }}
+        id: cache
+
+      # This step is cached in case the env file was not changed
+      - name: Update environment
+        run: mamba env update -f requirements.yml
+        if: steps.cache.outputs.cache-hit != 'true'
+
+      - name: Run Limmat Condition
+        shell: bash -l {0}
+        run: |
+          python workflow_wrapper.py
+      - uses: actions4git/add-commit-push@v1
+        with: 
+          commit-message: "Daily graph update"
